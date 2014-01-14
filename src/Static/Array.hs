@@ -1,8 +1,6 @@
 {-# LANGUAGE CPP, UndecidableInstances, MultiParamTypeClasses, ScopedTypeVariables, DataKinds, PolyKinds, TypeOperators, FlexibleInstances, FlexibleContexts, BangPatterns, GeneralizedNewtypeDeriving, TypeFamilies, ConstraintKinds, NoMonomorphismRestriction #-}
 module Static.Array
-  ( Array
-  , Vector
-  , Matrix
+  ( Array(..)
   , Dim
   , (:.)(..)
   , Z(..)
@@ -37,6 +35,7 @@ module Static.Array
   , afoldr'
   , afoldr
     -- * Zips
+  , sfoldZip
   , szipWith
   , azipWith
     -- * Util
@@ -47,10 +46,10 @@ module Static.Array
   , Static2
   , Static3
   ) where
+
 import qualified Data.Index as Index
 import Data.Index hiding (size)
 import Data.Index.Nat (CNat(..))
-import Data.Index.Range
 import Static.Internal
 
 import Control.Monad.Primitive (unsafeInlineIO)
@@ -147,19 +146,22 @@ class Static (n :: Peano) where
   sfoldr_    :: (Storable a, Storable b) => Int -> (a -> b -> b) -> b -> Array n a -> b
   smap_      :: (Storable a, Storable b) => Proxy o -> Int -> ForeignPtr b -> (a -> b) -> Array n a -> IO (Array o b)
   szipWith_  :: (Storable a, Storable b, Storable c) => Proxy o -> Int -> ForeignPtr c -> (a -> b -> c) -> Array n a -> Array n b -> IO (Array o c)
-  constant_ :: Storable a => Proxy n -> Proxy o -> Int -> ForeignPtr a -> a -> IO (Array o a)
+  sfoldZip_  :: (Storable a, Storable b) => Int -> (a -> b -> c -> c) -> c -> Array n a -> Array n b -> IO c
+  constant_  :: Storable a => Proxy n -> Proxy o -> Int -> ForeignPtr a -> a -> IO (Array o a)
 instance Static Zero where
   {-# INLINE sfoldl'_ #-}
   {-# INLINE sfoldr'_ #-}
   {-# INLINE sfoldr_ #-}
   {-# INLINE smap_ #-}
   {-# INLINE szipWith_ #-}
+  {-# INLINE sfoldZip_ #-}
   {-# INLINE constant_ #-}
   sfoldl'_ _ _ !z _ = return z
   sfoldr'_ _ _ !z _ = return z 
   sfoldr_  _ _  z _ = z
   smap_ _ _ fp _ _  = return (Array fp) 
   szipWith_ _ _ fp _ _ _ = return (Array fp)
+  sfoldZip_ _ _ z _ _ = return z
   constant_ _ _ _ fp _ = return (Array fp)
 instance Static n => Static (Succ n) where
   {-# INLINE sfoldl'_ #-}
@@ -167,6 +169,7 @@ instance Static n => Static (Succ n) where
   {-# INLINE sfoldr_ #-}
   {-# INLINE smap_ #-}
   {-# INLINE szipWith_ #-}
+  {-# INLINE sfoldZip_ #-}
   {-# INLINE constant_ #-}
   sfoldl'_ !i f !z arr = do
     x <- at' arr i
@@ -187,6 +190,11 @@ instance Static n => Static (Succ n) where
     pokeElemOff (unsafeForeignPtrToPtr fp) i $! f x y
     szipWith_ o (i+1) fp f (predA xs) (predA ys)
 
+  sfoldZip_ !i f !z xs ys = do
+    x <- at' xs i
+    y <- at' ys i
+    sfoldZip_ (i+1) f (f x y z) (predA xs) (predA ys)
+
   constant_ (_ :: Proxy (Succ n)) o !i fp !a = do
     pokeElemOff (unsafeForeignPtrToPtr fp) i a        
     constant_ (Proxy :: Proxy n) o (i+1) fp a
@@ -203,6 +211,9 @@ type Static3 n a b c = (Storable a, Storable b, Storable c, Dim n, Static (ToPea
 
 toPeanoArray :: Array n a -> Array (ToPeano (Size n)) a
 toPeanoArray (Array a) = Array a
+
+toPeanoProxy :: Proxy n -> Proxy (ToPeano (Size n))
+toPeanoProxy _ = Proxy
 
 {-# INLINE constant #-}
 constant :: Static1 n a => a -> Array n a
@@ -249,6 +260,10 @@ szipWith :: Static3 n a b c => (a -> b -> c) -> Array n a -> Array n b -> Array 
 szipWith f = \xs ys -> unsafeInlineIO $ do
   new <- mallocForeignPtrArray (size xs)
   szipWith_ (proxyDim xs) 0 new f (toPeanoArray xs) (toPeanoArray ys)
+
+{-# INLINE sfoldZip #-}
+sfoldZip :: Static2 n a b => (a -> b -> c -> c) -> c -> Array n a -> Array n b -> c
+sfoldZip f z = \xs ys -> unsafeInlineIO (sfoldZip_ 0 f z (toPeanoArray xs) (toPeanoArray ys))
 
 {-# INLINE afoldl' #-}
 -- | Strict left fold
@@ -414,24 +429,5 @@ instance (Fractional a, Static1 n a) => Fractional (Array n a) where
   recip        = smap recip
   fromRational = constant . fromRational
 
-type Vector n = Array (n:.Z)
-type Matrix i j = Array (i:.j:.Z)
-
 scale :: (Num a, Static1 n a) => a -> Array n a -> Array n a
 scale x = smap (x *)
-
-{-# RULES "Array/integer_prescale_2" 
-  forall a (b :: forall n e. (Num e, Static1 n e) => Array n e).
-    fromInteger a * b = smap (fromInteger a *) b
- #-}
-
-{-# RULES "Array/integer_postscale_2"
-  forall a (b :: forall n e. (Num e, Static1 n e) => Array n e).
-    b * fromInteger a = smap (* fromInteger a) b
- #-}
-
-{-# RULES "constant" 
-  forall (a :: Num a => a) b. 
-    constant a * b = smap (a *) b
- #-}
-
