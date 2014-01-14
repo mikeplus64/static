@@ -14,8 +14,8 @@ module Static.Build
 import Static.Array
 import Static.Internal
 import Data.Index.Nat
-import Data.Index.Range
 import qualified Data.Index as Ix
+import Data.Index hiding (size)
 import GHC.TypeLits
 import Data.Proxy
 import Data.Tagged
