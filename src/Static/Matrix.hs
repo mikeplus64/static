@@ -1,26 +1,29 @@
 {-# LANGUAGE PolyKinds, DataKinds, TypeOperators, FlexibleContexts, NoMonomorphismRestriction, ConstraintKinds, ScopedTypeVariables, BangPatterns, TypeFamilies #-}
 module Static.Matrix
-  ( row, column
+  ( Matrix
+  , row, column
   , fromRow, fromColumn
   , takeRow, takeColumn
   , identity
-  , (!*!)
+  , (!*!), (·)
   , transpose
   ) where
 import Static.Array
 import Static.Build
-import Static.Internal
+import Static.Vector
 import Control.Monad.Primitive
 import Control.Applicative
 import Foreign
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
-import Data.Index.Range
 import Data.Index.Nat
 import qualified Data.Index as Ix
+import Data.Index hiding (size)
 import Data.Proxy
 import Foreign
 import Foreign.Marshal.Array
 import GHC.TypeLits
+
+type Matrix x y = Array (x:.y:.Z)
 
 {-# INLINE resultantDim #-}
 resultantDim :: Matrix m n a -> Matrix p m a -> Proxy (p:.n:.Z)
@@ -32,7 +35,7 @@ newResultant a b = Array `fmap` mallocForeignPtrArray (Ix.size (resultantDim a b
 
 {-# INLINE withArrayRange #-}
 withArrayRange :: (Ranged n, Applicative m) => Array n a -> (n -> m ()) -> m ()
-withArrayRange _ = swithRange
+withArrayRange _ = swithRange Proxy
 
 row :: Vector n a -> Matrix n 1 a
 row (Array a) = Array a
@@ -53,15 +56,26 @@ fromColumn (Array a) = Array a
   => Matrix m n a
   -> Matrix p m a
   -> Matrix p n a
-(a :: Matrix m n a) !*! b = unsafeInlineIO $ do
+(!*!) = \(a :: Matrix m n a) b -> unsafeInlineIO $ do
   ab@(Array new) <- newResultant a b
   let !ptr = unsafeForeignPtrToPtr new
   withArrayRange ab $ \ ij@(j:.i:.Z) -> 
     pokeElemOff ptr (Ix.toIndex ij) $!
-      sfoldlRange (\acc (k:._ :: m:.Z) ->
+      sfoldlRange Proxy (\acc (k:._ :: m:.Z) ->
         acc + a!k:.i:.Z * b!j:.k:.Z) 0
   return ab
 
+{-# INLINE (·) #-}
+(·)
+  :: (Storable a, Num a, Ranged (p:.n:.Z), Ranged (m:.Z), Dim (m:.n:.Z), Dim (p:.m:.Z))
+  => Matrix m n a
+  -> Matrix p m a
+  -> Matrix p n a
+(·) = (!*!)
+
+infixl 8 !*!
+infixl 8 ·
+  
 -- | Tranposition of a matrix
 {-# INLINE transpose #-}
 transpose :: (Ranged (x:.y:.Z), Dim (y:.x:.Z), Storable a) => Matrix x y a -> Matrix y x a
