@@ -181,14 +181,12 @@ instance Static n => Static (Succ n) where
 
   smap_ o !i fp f arr = do
     x <- at' arr i
-    -- pokeElemOff (unsafeForeignPtrToPtr fp) i $! f x
     withForeignPtr fp $ \ptr -> pokeElemOff ptr i $! f x
     smap_ o (i+1) fp f (predA arr)
 
   szipWith_ o !i fp f xs ys = do
     x <- at' xs i
     y <- at' ys i
-    -- pokeElemOff (unsafeForeignPtrToPtr fp) i $! f x y
     withForeignPtr fp $ \ptr -> pokeElemOff ptr i $! f x y
     szipWith_ o (i+1) fp f (predA xs) (predA ys)
 
@@ -198,7 +196,6 @@ instance Static n => Static (Succ n) where
     sfoldZip_ (i+1) f (f x y z) (predA xs) (predA ys)
 
   constant_ (_ :: Proxy (Succ n)) o !i fp !a = do
-    -- pokeElemOff (unsafeForeignPtrToPtr fp) i a        
     withForeignPtr fp $ \ptr -> pokeElemOff ptr i a
     constant_ (Proxy :: Proxy n) o (i+1) fp a
 

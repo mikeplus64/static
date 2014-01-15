@@ -73,7 +73,11 @@ Examples:
 -} 
 {-# INLINE array #-}
 array :: forall n f a. Building n f a => f
-array = build_ (return (Array fptr :: Array n a)) (Tagged ptr :: Tagged (ToPeano (Size n)) (Ptr a)) 0
+array = build_
+    (do touchForeignPtr fptr
+        return (Array fptr :: Array n a))
+    (Tagged ptr :: Tagged (ToPeano (Size n)) (Ptr a))
+    0
   where
     fptr :: ForeignPtr a
     fptr = unsafeInlineIO (mallocForeignPtrArray (Ix.size (Proxy :: Proxy n)))
