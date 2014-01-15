@@ -18,7 +18,8 @@ module Static.Array
   , toVector
   , toList
   , matrixToLists
-  , unsafeArrayToPtr
+  , withArray
+  , unsafeWithArray
   , unsafeArrayToForeignPtr
     -- * Manipulation
   , Static()
@@ -53,9 +54,8 @@ import Data.Index.Nat (CNat(..))
 import Static.Internal
 
 import Control.Monad.Primitive (unsafeInlineIO)
-import Foreign hiding (unsafeForeignPtrToPtr, unsafePerformIO)
-import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import System.IO.Unsafe (unsafeInterleaveIO)
+import Foreign hiding (withArray)
 
 import Data.Proxy
 import GHC.TypeLits
@@ -181,13 +181,15 @@ instance Static n => Static (Succ n) where
 
   smap_ o !i fp f arr = do
     x <- at' arr i
-    pokeElemOff (unsafeForeignPtrToPtr fp) i $! f x
+    -- pokeElemOff (unsafeForeignPtrToPtr fp) i $! f x
+    withForeignPtr fp $ \ptr -> pokeElemOff ptr i $! f x
     smap_ o (i+1) fp f (predA arr)
 
   szipWith_ o !i fp f xs ys = do
     x <- at' xs i
     y <- at' ys i
-    pokeElemOff (unsafeForeignPtrToPtr fp) i $! f x y
+    -- pokeElemOff (unsafeForeignPtrToPtr fp) i $! f x y
+    withForeignPtr fp $ \ptr -> pokeElemOff ptr i $! f x y
     szipWith_ o (i+1) fp f (predA xs) (predA ys)
 
   sfoldZip_ !i f !z xs ys = do
@@ -196,7 +198,8 @@ instance Static n => Static (Succ n) where
     sfoldZip_ (i+1) f (f x y z) (predA xs) (predA ys)
 
   constant_ (_ :: Proxy (Succ n)) o !i fp !a = do
-    pokeElemOff (unsafeForeignPtrToPtr fp) i a        
+    -- pokeElemOff (unsafeForeignPtrToPtr fp) i a        
+    withForeignPtr fp $ \ptr -> pokeElemOff ptr i a
     constant_ (Proxy :: Proxy n) o (i+1) fp a
 
 predA :: Array (Succ n) a -> Array n a
@@ -282,13 +285,13 @@ afoldl' f z arr = let !r = go z 0 in r
 azipWith :: (Storable a, Storable b, Storable c, Dim n) => (a -> b -> c) -> Array n a -> Array n b -> Array n c
 azipWith f xs ys = unsafeInlineIO $ do
   zs <- mallocForeignPtrArray (size xs)
-  let ptr   = unsafeForeignPtrToPtr zs
-      go !i = when (i < size xs) $ do
-        a <- at' xs i
-        b <- at' ys i
-        pokeElemOff ptr i $! f a b
-        go (i+1)
-  go 0
+  withForeignPtr zs $ \ ptr ->
+    let go !i = when (i < size xs) $ do
+          a <- at' xs i
+          b <- at' ys i
+          pokeElemOff ptr i $! f a b
+          go (i+1)
+    in go 0
   return (Array zs)
 
 {-# INLINE afoldl2T #-}
@@ -346,17 +349,17 @@ any2 f xs ys = unsafeInlineIO $ do
 amap :: (Storable a, Storable b, Dim n) => (a -> b) -> Array n a -> Array n b
 amap f xs = unsafeInlineIO $ do
   zs <- mallocForeignPtrArray (size xs)
-  let ptr   = unsafeForeignPtrToPtr zs
-      go !i = when (i < size xs) $ do
-        x <- at' xs i
-        pokeElemOff ptr i $! f x
-        go (i+1)
-  go 0
+  withForeignPtr zs $  \ptr ->
+    let go !i = when (i < size xs) $ do
+          x <- at' xs i
+          pokeElemOff ptr i $! f x
+          go (i+1)
+    in go 0
   return (Array zs)
                 
 {-# INLINE at' #-}
 at' :: Storable a => Array n a -> Int -> IO a
-at' = peekElemOff . unsafeArrayToPtr
+at' (Array a) i = withForeignPtr a (\ptr -> peekElemOff ptr i)
 
 {-# INLINE toVector #-}
 toVector :: (Storable a, Dim n) => Array n a -> V.Vector a
@@ -392,21 +395,29 @@ dimOf x = reflect `asProxyTypeOf` proxyDim x
 
 {-# INLINE (!) #-}
 (!) :: (Storable a, Dim n) => Array n a -> n -> a
-(!) arr ix = unsafeInlineIO (peekElemOff (unsafeArrayToPtr arr) (toIndex ix))
+(!) arr ix = unsafeInlineIO $ unsafeWithArray arr $ \ptr -> peekElemOff ptr $! toIndex ix
 
 infixr 8 !
 
 {-# INLINE (!>) #-}
 (!>) :: (Storable a, Dim n) => Array n a -> Int -> a
-arr!>ix = unsafeInlineIO (peekElemOff (unsafeArrayToPtr arr) ix)
+arr!>ix = unsafeInlineIO $ unsafeWithArray arr $ \ptr -> peekElemOff ptr ix
 
 {-# INLINE unsafeArrayToForeignPtr #-}
 unsafeArrayToForeignPtr :: Array n a -> ForeignPtr a
 unsafeArrayToForeignPtr (Array p) = p
 
-{-# INLINE unsafeArrayToPtr #-}
-unsafeArrayToPtr :: Array n a -> Ptr a
-unsafeArrayToPtr = unsafeForeignPtrToPtr . unsafeArrayToForeignPtr
+{-# INLINE unsafeWithArray #-}
+unsafeWithArray :: Storable a => Array n a -> (Ptr a -> IO b) -> IO b
+unsafeWithArray (Array p) = withForeignPtr p
+
+{-# INLINE withArray #-}
+withArray :: (Dim n, Storable a) => Array n a -> (Ptr a -> IO b) -> IO b
+withArray a f = unsafeWithArray a $ \ ptr -> do
+  new <- reallocArray ptr (size a)
+  x   <- f new
+  free new
+  return x
 
 x' :: Array (x:.y:.Z) a -> Proxy x
 x' _ = Proxy

@@ -14,7 +14,6 @@ import Static.Vector
 import Control.Monad.Primitive
 import Control.Applicative
 import Foreign
-import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import Data.Index.Nat
 import qualified Data.Index as Ix
 import Data.Index hiding (size)
@@ -58,11 +57,11 @@ fromColumn (Array a) = Array a
   -> Matrix p n a
 (!*!) = \(a :: Matrix m n a) b -> unsafeInlineIO $ do
   ab@(Array new) <- newResultant a b
-  let !ptr = unsafeForeignPtrToPtr new
-  withArrayRange ab $ \ ij@(j:.i:.Z) -> 
-    pokeElemOff ptr (Ix.toIndex ij) $!
-      sfoldlRange Proxy (\acc (k:._ :: m:.Z) ->
-        acc + a!k:.i:.Z * b!j:.k:.Z) 0
+  withForeignPtr new $ \ptr ->
+    withArrayRange ab $ \ ij@(j:.i:.Z) -> 
+      pokeElemOff ptr (Ix.toIndex ij) $!
+        sfoldlRange Proxy (\acc (k:._ :: m:.Z) ->
+          acc + a!k:.i:.Z * b!j:.k:.Z) 0
   return ab
 
 {-# INLINE (·) #-}
@@ -81,10 +80,10 @@ infixl 8 ·
 transpose :: (Ranged (x:.y:.Z), Dim (y:.x:.Z), Storable a) => Matrix x y a -> Matrix y x a
 transpose a = unsafeInlineIO $ do
   new <- mallocForeignPtrArray (size a)
-  let !ptr = unsafeForeignPtrToPtr new
-  withArrayRange a $ \ix -> do
-    x <- peekElemOff ptr (Ix.toIndex (transposeIx ix))
-    pokeElemOff ptr (Ix.toIndex ix) x
+  withForeignPtr new $ \ptr ->
+    withArrayRange a $ \ix -> do
+      x <- peekElemOff ptr (Ix.toIndex (transposeIx ix))
+      pokeElemOff ptr (Ix.toIndex ix) x
   return (Array new)
 
 -- | Identity matrix
@@ -92,12 +91,12 @@ transpose a = unsafeInlineIO $ do
 identity :: forall n a. (Ranged (n:.n:.Z), CNat n, Storable a, Num a) => Matrix n n a
 identity = unsafeInlineIO $ do
   new <- mallocForeignPtrArray (cnat (Proxy :: Proxy n) ^ (2 :: Int))
-  let !ptr = unsafeForeignPtrToPtr new
-      !mat = Array new :: Matrix n n a
-  withArrayRange mat $ \ ix@(x:.y:.Z) -> 
-    if x == y
-    then pokeElemOff ptr (Ix.toIndex ix) 1
-    else pokeElemOff ptr (Ix.toIndex ix) 0
+  let !mat = Array new :: Matrix n n a
+  withForeignPtr new $ \ptr ->
+    withArrayRange mat $ \ ix@(x:.y:.Z) -> 
+      if x == y
+      then pokeElemOff ptr (Ix.toIndex ix) 1
+      else pokeElemOff ptr (Ix.toIndex ix) 0
   return mat
 
 {-# INLINE takeRow #-} 
@@ -106,11 +105,11 @@ takeRow
   => Matrix x y a -> Proxy r -> Vector x a
 takeRow mat@(Array a :: Matrix x y a) (r :: Proxy r) = unsafeInlineIO $ do
   new <- mallocForeignPtrArray (cnat (Proxy :: Proxy y))
-  let !nptr = unsafeForeignPtrToPtr new
-      !optr = unsafeForeignPtrToPtr a
-      !vec = Array new :: Vector x a
-  withArrayRange vec $ \ (y:.Z) -> 
-    pokeElemOff nptr y =<< peekElemOff optr (cnat (Proxy :: Proxy (r*x)) + y)
+  let !vec = Array new :: Vector x a
+  withForeignPtr new $ \nptr ->
+    withForeignPtr a $ \optr -> 
+      withArrayRange vec $ \ (y:.Z) -> 
+        pokeElemOff nptr y =<< peekElemOff optr (cnat (Proxy :: Proxy (r*x)) + y)
   return vec
 
 {-# INLINE takeColumn #-}
@@ -119,11 +118,11 @@ takeColumn
   => Matrix x y a -> Proxy c -> Vector y a
 takeColumn mat@(Array a :: Matrix x y a) (c :: Proxy c) = unsafeInlineIO $ do
   new <- mallocForeignPtrArray (cnat (Proxy :: Proxy x))
-  let !nptr = unsafeForeignPtrToPtr new
-      !optr = unsafeForeignPtrToPtr a
-      !vec = Array new :: Vector y a
-  withArrayRange vec $ \ (x:.Z) ->
-    pokeElemOff nptr x =<< peekElemOff optr (cnat (Proxy :: Proxy c) + x * cnat (Proxy :: Proxy x))
+  let !vec = Array new :: Vector y a
+  withForeignPtr new $ \nptr ->
+    withForeignPtr a $ \optr -> 
+      withArrayRange vec $ \ (x:.Z) ->
+        pokeElemOff nptr x =<< peekElemOff optr (cnat (Proxy :: Proxy c) + x * cnat (Proxy :: Proxy x))
   return vec
 
 transposeIx :: x:.y:.Z -> y:.x:.Z

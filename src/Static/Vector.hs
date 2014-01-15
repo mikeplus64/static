@@ -51,4 +51,3 @@ enorm = sfoldl' (\x acc -> acc + x*x) 0
 normalise :: (Fractional a, Storable a) => Vector 4 a -> Vector 3 a
 normalise v = w `seq` vector (v!>0/w) (v!>1/w) (v!>2/w)
  where w = v!>3
-
