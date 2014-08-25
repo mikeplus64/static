@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, UndecidableInstances, MultiParamTypeClasses, ScopedTypeVariables, DataKinds, PolyKinds, TypeOperators, FlexibleInstances, FlexibleContexts, BangPatterns, GeneralizedNewtypeDeriving, TypeFamilies, ConstraintKinds, NoMonomorphismRestriction #-}
+{-# LANGUAGE CPP, UndecidableInstances, MultiParamTypeClasses, ScopedTypeVariables, DataKinds, PolyKinds, TypeOperators, FlexibleInstances, FlexibleContexts, BangPatterns, GeneralizedNewtypeDeriving, TypeFamilies, ConstraintKinds, NoMonomorphismRestriction, InstanceSigs #-}
 module Static.Array
   ( Array(..)
   , Dim
@@ -439,3 +439,24 @@ instance (Fractional a, Static1 n a) => Fractional (Array n a) where
 
 scale :: (Num a, Static1 n a) => a -> Array n a -> Array n a
 scale x = smap (x *)
+
+anElem :: Array n a -> a
+anElem _ = undefined
+
+-- | I'm unsure how safe this instance is
+instance (Storable a, Ranged n) => Storable (Array n a) where
+  {-# INLINE sizeOf #-}
+  sizeOf    a = size a * sizeOf (anElem a)
+  {-# INLINE alignment #-}
+  alignment a = sizeOf (anElem a)
+  {-# INLINE peek #-}
+  peek :: Ptr (Array n a) -> IO (Array n a)
+  peek topPtr = do
+    ptr  <- peek (castPtr topPtr :: Ptr (Ptr a))
+    fptr <- newForeignPtr finalizerFree ptr
+    return (Array fptr)
+  {-# INLINE poke #-}
+  poke :: Ptr (Array n a) -> Array n a -> IO ()
+  poke topPtr arr@(Array fptr) = withForeignPtr fptr $ \ ptr -> do
+    new <- reallocArray ptr (size arr)
+    poke (castPtr topPtr :: Ptr (Ptr a)) new
