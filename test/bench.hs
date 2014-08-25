@@ -24,23 +24,23 @@ instance NFData (Array n a)
 instance NFData (V4 a)
 
 a :: Matrix 3 2 Double
-a = mat32 1 0 (-2)
-          0 3 (-1)
+a = matrix 1 0 (-2)
+           0 3 (-1)
 
 b :: Matrix 2 3 Double
-b = mat23   0    3
+b = matrix  0    3
           (-2) (-1)
             0    4
 
 m1 :: Matrix 4 4 Double
-m1 = mat44
+m1 = matrix
     1 2 3 4
     5 6 7 8
     9 10 11 12
     13 14 15 16
 
 m2 :: Matrix 4 4 Double
-m2 = mat44
+m2 = matrix
     21 22 23 24
     25 26 27 28
     29 210 211 212
@@ -65,6 +65,6 @@ hm2 = H.fromLists
 main :: IO ()
 main = defaultMain
   [ bench "linear !*!" (uncurry (L.!*!) `nf` (lm1, lm2))
-  , bench "static mXm" (uncurry (!*!) `nf` (m1, m2))
+  , bench "static mXm" (uncurry (·) `nf` (m1, m2))
   , bench "hmatrix mXm" (uncurry H.mXm `nf` (hm1, hm2))
   ]
